@@ -9,30 +9,27 @@ from datetime import datetime
 # [설정 구역]
 # ==========================================
 
-# 1. 검색어 목록 (자유롭게 추가/삭제)
 SEARCH_KEYWORDS = [
     "(Total Knee Replacement) AND (Robotic)",
     "(Total Hip Replacement) AND (Direct Anterior Approach)",
     "(Ankle Instability) AND (Reconstruction)"
 ]
 
-# 2. 내 정보 가져오기 (Github Secrets)
 MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-# 3. 기본 설정
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색 (링크, 저널명 포함)
+# [기능 1] 논문 검색
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=3):
     try:
-        # reldate=2 (최근 2일)로 설정하여 매일 새로운 논문 위주로 검색
+        # reldate=2 (최근 2일)
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=2, datetype="pdat")
         record = Entrez.read(handle)
@@ -55,20 +52,15 @@ def fetch_pubmed_papers(keyword, max_results=3):
 
     for article in records['PubmedArticle']:
         try:
-            # 기본 정보 추출
             citation = article['MedlineCitation']
             article_data = citation['Article']
             
             title = article_data['ArticleTitle']
-            
-            # [추가됨] 저널 이름 가져오기
             journal = article_data['Journal'].get('Title', 'Unknown Journal')
             
-            # [추가됨] PMID로 링크 만들기
             pmid = citation['PMID']
             link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
-            # 초록 추출
             if 'Abstract' in article_data:
                 abstract_list = article_data['Abstract']['AbstractText']
                 abstract = " ".join(abstract_list) if isinstance(abstract_list, list) else str(abstract_list)
@@ -107,18 +99,16 @@ def summarize_paper(title, abstract):
         response = model.generate_content(prompt)
         return response.text
     except Exception:
-        return "요약 실패 (내용이 너무 길거나 API 오류)"
+        return "요약 실패"
 
 # ==========================================
-# [기능 3] 이메일 전송 (HTML 디자인 적용)
+# [기능 3] 이메일 전송
 # ==========================================
 def send_email(content_html):
     if not MY_EMAIL or not MY_APP_PASSWORD:
         return
 
-    # 일반 텍스트가 아니라 HTML 형식을 사용한다고 선언
     msg = MIMEText(content_html, 'html')
-    
     today = datetime.now().strftime('%Y-%m-%d')
     msg['Subject'] = f"📢 [매일 논문] {today} 분야별 최신 의학 리포트"
     msg['From'] = MY_EMAIL
@@ -136,14 +126,12 @@ def send_email(content_html):
 # [실행] 메인 로직
 # ==========================================
 def main():
-    # 이메일 본문을 HTML로 예쁘게 작성
     html_body = "<h2>📅 최근 48시간 이내 주요 논문 리포트</h2><hr>"
     total_papers_found = 0
 
     for keyword in SEARCH_KEYWORDS:
         papers = fetch_pubmed_papers(keyword, max_results=3)
         
-        # 주제별 헤더
         html_body += f"<h3 style='color: #2E86C1;'>🔍 주제: {keyword}</h3>"
 
         if not papers:
@@ -153,7 +141,9 @@ def main():
         for i, paper in enumerate(papers, 1):
             summary = summarize_paper(paper['title'], paper['abstract'])
             
-            # 논문 1개 박스 디자인
+            # [수정된 부분] 에러 방지를 위해 변환을 먼저 수행합니다
+            summary_html = summary.replace('\n', '<br>')
+            
             html_body += f"""
             <div style='background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px;'>
                 <p style='font-size: 16px; font-weight: bold;'>
@@ -163,7 +153,7 @@ def main():
                 </p>
                 <p style='color: gray; font-size: 12px;'>📖 Journal: {paper['journal']}</p>
                 <div style='background-color: #ffffff; padding: 10px; border: 1px solid #ddd;'>
-                    {summary.replace('\n', '<br>')}
+                    {summary_html}
                 </div>
             </div>
             """
@@ -171,7 +161,6 @@ def main():
         
         html_body += "<br>"
 
-    # 논문이 하나라도 있으면 메일 전송
     if total_papers_found > 0:
         send_email(html_body)
     else:
