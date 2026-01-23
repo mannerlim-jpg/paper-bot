@@ -21,7 +21,7 @@ SEARCH_KEYWORDS = [
 
 print("🚀 [진단 시작] 봇 가동 중...")
 
-# 환경변수 확인 (비밀번호는 숨기고, 존재 여부만 확인)
+# 환경변수 확인
 MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -34,20 +34,20 @@ else:
     print("✅ 환경변수 확인 완료.")
     genai.configure(api_key=GEMINI_API_KEY.strip())
 
-# Entrez 이메일 설정 (필수)
+# Entrez 이메일 설정
 if MY_EMAIL:
     Entrez.email = MY_EMAIL
 else:
-    Entrez.email = "test@test.com" # 비상용 더미 이메일
+    Entrez.email = "test@test.com"
 
 # ==========================================
-# [기능 1] 논문 검색 (디버깅 모드)
+# [기능 1] 논문 검색 (디버깅 모드 - 30일)
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
     print(f"🔎 검색 시도: '{keyword}' (최근 30일)")
     
     try:
-        # 30일 검색으로 고정
+        # 30일 검색으로 고정 (테스트용)
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=30, datetype="pdat")
         record = Entrez.read(handle)
@@ -68,7 +68,7 @@ def fetch_pubmed_papers(keyword, max_results=5):
         records = Entrez.read(handle)
         handle.close()
     except Exception as e:
-        print(f"🚨 [다운로드 에러] 논문 상세 정보 가져오기 실패: {e}")
+        print(f"🚨 [다운로드 에러] 상세 정보 가져오기 실패: {e}")
         return []
 
     for article in records['PubmedArticle']:
@@ -88,7 +88,7 @@ def fetch_pubmed_papers(keyword, max_results=5):
             
             papers.append({"title": title, "abstract": abstract, "journal": journal, "link": link})
         except Exception as e:
-            print(f"⚠️ 논문 파싱 중 건너뜀: {e}")
+            print(f"⚠️ 파싱 건너뜀: {e}")
             continue
             
     print(f"   ✅ 처리 완료: {len(papers)}건")
@@ -134,7 +134,7 @@ def send_email(content_html):
     print("📧 이메일 발송 시도 중...")
     msg = MIMEText(content_html, 'html')
     today = datetime.now().strftime('%Y-%m-%d')
-    msg['Subject'] = f"📢 [Dr.AI] {today} 정형외과 논문 브리핑 (TEST)"
+    msg['Subject'] = f"📢 [Dr.AI] {today} 정형외과 논문 브리핑 (진단 리포트)"
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
@@ -154,4 +154,25 @@ def main():
     total_papers = 0
 
     for keyword in SEARCH_KEYWORDS:
-        papers = fetch_pubmed_papers(keyword, max_results=2
+        # 테스트를 위해 검색어당 2개씩만
+        papers = fetch_pubmed_papers(keyword, max_results=2) 
+        
+        if not papers: continue
+
+        for i, paper in enumerate(papers, 1):
+            if total_papers > 0: time.sleep(5)
+
+            print(f"   🤖 AI 분석 중: {paper['title'][:30]}...")
+            impact, one_liner, deep_rev = summarize_paper(paper['title'], paper['abstract'])
+            
+            deep_rev_html = deep_rev.replace('\n', '<br>')
+            html_body += f"<h3>{paper['title']}</h3><p><b>환자용:</b> {one_liner}</p><hr>"
+            total_papers += 1
+
+    if total_papers > 0:
+        send_email(html_body)
+    else:
+        print("🛑 [결과] 수집된 논문이 0건이라 메일을 보내지 않았습니다.")
+
+if __name__ == "__main__":
+    main()
