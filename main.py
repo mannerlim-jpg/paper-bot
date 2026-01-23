@@ -29,13 +29,13 @@ if GEMINI_API_KEY:
 Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색 (30일 범위 유지)
+# [기능 1] 논문 검색 (2일 범위 유지)
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
     try:
-        # 논문이 확실히 나오도록 30일로 설정
+        # 논문이 확실히 나오도록 2일로 설정
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
-                                sort="relevance", reldate=30, datetype="pdat")
+                                sort="relevance", reldate=2, datetype="pdat")
         record = Entrez.read(handle)
         handle.close()
     except:
