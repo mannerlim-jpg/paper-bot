@@ -6,21 +6,15 @@ import google.generativeai as genai
 from datetime import datetime
 
 # ==========================================
-# [설정 구역] 검색어를 대폭 추가했습니다
+# [설정 구역]
 # ==========================================
 
 SEARCH_KEYWORDS = [
-    # 1. 기존 관심사
     "(Total Knee Replacement) AND (Robotic)",
-    
-    # 2. 요청하신 추가 검색어 (너무 광범위하지 않게 필터링)
-    "Ankle Instability",         # 발목 불안정성
-    "(Ankle) AND (Arthroscopy)", # 발목 관절경 (범위 좁힘)
-    "(Knee) AND (Arthroscopy)",  # 무릎 관절경
-    "Arthroscopy",               # 관절경 일반
-    
-    # 3. 혹시 몰라 넣어둔 넓은 범위 (필요 없으면 삭제 가능)
-    # "(Ankle) OR (Knee)" # 이건 너무 많아서 스팸이 될 수 있어 제외했습니다.
+    "Ankle Instability",
+    "(Ankle) AND (Arthroscopy)",
+    "(Knee) AND (Arthroscopy)",
+    "Arthroscopy"
 ]
 
 # 환경변수 로드
@@ -29,18 +23,18 @@ MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-# Gemini & PubMed 설정
+# [핵심 수정 1] API 키에 묻은 '공백/줄바꿈'을 자동으로 제거(.strip())
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    clean_key = GEMINI_API_KEY.strip()
+    genai.configure(api_key=clean_key)
 Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색 (매일 새로운 것만!)
+# [기능 1] 논문 검색
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
-    # max_results를 3개에서 5개로 늘렸습니다.
     try:
-        # reldate=2 (최근 48시간) : 어제/오늘 나온 논문만 검색 (중복 방지 핵심!)
+        # 최근 48시간(2일) 이내 논문만 검색
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=2, datetype="pdat")
         record = Entrez.read(handle)
@@ -65,10 +59,8 @@ def fetch_pubmed_papers(keyword, max_results=5):
         try:
             citation = article['MedlineCitation']
             article_data = citation['Article']
-            
             title = article_data['ArticleTitle']
             journal = article_data['Journal'].get('Title', 'Unknown Journal')
-            
             pmid = citation['PMID']
             link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
@@ -89,34 +81,43 @@ def fetch_pubmed_papers(keyword, max_results=5):
     return papers
 
 # ==========================================
-# [기능 2] Gemini 요약 (최신 모델 적용)
+# [기능 2] Gemini 요약 (스마트 재시도 기능 추가)
 # ==========================================
 def summarize_paper(title, abstract):
     if not GEMINI_API_KEY:
         return "오류: API 키가 없습니다."
 
-    # 최신 모델 사용 (속도 빠름, 구형 키 호환성 좋음)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-    
-    prompt = f"""
-    아래 정형외과 논문을 한국어로 핵심만 3줄 요약하세요.
-    
-    [논문 제목]: {title}
-    [초록]: {abstract}
-    
-    [출력 형식]:
-    1. 목적:
-    2. 결과:
-    3. 임상적 의의:
-    """
+    # 1차 시도: 최신 모델 (flash)
     try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        prompt = f"""
+        아래 정형외과 논문을 한국어로 핵심만 3줄 요약하세요.
+        제목: {title}
+        초록: {abstract}
+        형식:
+        1. 목적:
+        2. 결과:
+        3. 의의:
+        """
         response = model.generate_content(prompt)
         return response.text
-    except Exception as e:
-        return f"요약 실패 ({str(e)})"
+        
+    except Exception as first_error:
+        # [핵심 수정 2] 실패 시 자동으로 'pro' 모델로 재시도
+        try:
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as second_error:
+            # [핵심 수정 3] 둘 다 실패하면, '내 키로 쓸 수 있는 모델 목록'을 에러 메시지에 띄움 (진단용)
+            try:
+                my_models = [m.name for m in genai.list_models()]
+                return f"요약 실패. (내 키로 사용 가능한 모델: {my_models}) / 에러: {second_error}"
+            except:
+                return f"치명적 오류: API 키가 잘못되었거나 권한이 없습니다. ({first_error})"
 
 # ==========================================
-# [기능 3] 이메일 전송 (디자인 개선)
+# [기능 3] 이메일 전송
 # ==========================================
 def send_email(content_html):
     if not MY_EMAIL or not MY_APP_PASSWORD:
@@ -144,10 +145,8 @@ def main():
     total_papers_found = 0
 
     for keyword in SEARCH_KEYWORDS:
-        # 각 키워드별로 검색
         papers = fetch_pubmed_papers(keyword, max_results=5)
         
-        # 키워드 제목 디자인
         html_body += f"<h3 style='color: #2E86C1; border-left: 5px solid #2E86C1; padding-left: 10px;'>🔍 {keyword}</h3>"
 
         if not papers:
