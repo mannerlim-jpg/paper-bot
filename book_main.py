@@ -13,7 +13,7 @@ from datetime import datetime
 def get_book_recommendation_huggingface():
     """
     Hugging Face의 무료 Inference API를 사용합니다.
-    URL이 최신 주소(router.huggingface.co)로 업데이트되었습니다.
+    모델: HuggingFaceH4/zephyr-7b-beta (무료 서버에서 가장 안정적이고 성능 좋은 모델)
     """
     # GitHub Secrets에서 가져온 토큰
     api_token = os.environ.get("HF_TOKEN", "").strip()
@@ -35,22 +35,24 @@ def get_book_recommendation_huggingface():
     ]
     today_theme = random.choice(themes)
 
-    # 2. Hugging Face API 주소 (최신 주소로 변경됨)
-    model_id = "mistralai/Mistral-7B-Instruct-v0.3"
-    # [수정] api-inference -> router 로 변경 완료
-    url = f"https://router.huggingface.co/models/{model_id}"
+    # 2. Hugging Face API 주소 및 모델 설정 (Zephyr 모델 사용)
+    model_id = "HuggingFaceH4/zephyr-7b-beta"
+    url = f"https://api-inference.huggingface.co/models/{model_id}"
     
-    # 3. 프롬프트 (한국어 답변 요청)
-    prompt = f"""<s>[INST] 당신은 20년 차 정형외과 의사를 위한 지적인 '독서 큐레이터'입니다.
-    아래 주제에 맞춰 깊이 있는 책 1권을 추천해주세요. 
-    반드시 '한국어'로 답변해야 합니다.
+    # 3. 프롬프트 (Zephyr 모델은 <|system|> 태그를 좋아합니다)
+    prompt = f"""<|system|>
+    당신은 20년 차 정형외과 의사를 위한 지적인 '독서 큐레이터'입니다.
+    반드시 '한국어'로 답변해야 합니다.</s>
+    <|user|>
+    아래 주제에 맞춰 깊이 있는 책 1권을 추천해주세요.
 
     주제: {today_theme}
 
     [필수 포함 내용]
     1. 책 제목과 저자
     2. 추천 이유 (의사의 관점에서 3줄 요약)
-    3. 인상 깊은 구절 (한 문장) [/INST]
+    3. 인상 깊은 구절 (한 문장)</s>
+    <|assistant|>
     """
 
     payload = {
@@ -74,7 +76,8 @@ def get_book_recommendation_huggingface():
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req) as response:
                 response_body = response.read().decode("utf-8")
-                # [중요] 여기가 아까 잘렸던 부분입니다! 꼭 확인하세요.
+                
+                # [수정 완료] 아까 잘렸던 부분이 여기입니다!
                 response_json = json.loads(response_body)
                 
                 if isinstance(response_json, list) and "generated_text" in response_json[0]:
@@ -85,6 +88,7 @@ def get_book_recommendation_huggingface():
 
         except urllib.error.HTTPError as e:
             error_msg = e.read().decode("utf-8")
+            # 503 (로딩중) 처리 - 무료 모델은 깨우는데 시간이 걸릴 수 있음
             if e.code == 503:
                 print(f"⚠️ 모델 로딩 중 (503)... 20초 후 재시도 ({attempt+1}/{max_retries})")
                 time.sleep(20)
@@ -108,11 +112,11 @@ def send_email(content):
     msg["From"] = sender_email
     msg["To"] = receiver_email
     today = datetime.now().strftime("%Y-%m-%d")
-    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Mistral AI)"
+    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Zephyr AI)"
 
     body = f"""
     원장님, 좋은 아침입니다.
-    오늘의 영감을 위한 책 추천입니다. (Mistral AI)
+    오늘의 영감을 위한 책 추천입니다. (Powered by Zephyr)
     
     ==================================================
     {content}
