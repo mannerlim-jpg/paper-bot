@@ -6,11 +6,18 @@ import google.generativeai as genai
 from datetime import datetime
 
 # ==========================================
-# [설정 구역]
+# [설정 구역] 요청하신 검색어 추가 완료
 # ==========================================
 
 SEARCH_KEYWORDS = [
+    # 1. 기존 핵심 주제
     "(Total Knee Replacement) AND (Robotic)",
+    
+    # 2. 새로 추가하신 주제
+    "Total Knee Arthroplasty",  # 인공슬관절 전치환술 (일반)
+    "Foot",                     # 발 (족부)
+    
+    # 3. 지난번 추가했던 세부 주제 (계속 유지)
     "Ankle Instability",
     "(Ankle) AND (Arthroscopy)",
     "(Knee) AND (Arthroscopy)",
@@ -23,7 +30,7 @@ MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-# [핵심 수정 1] API 키에 묻은 '공백/줄바꿈'을 자동으로 제거(.strip())
+# [핵심] API 키 공백 제거 (에러 방지용)
 if GEMINI_API_KEY:
     clean_key = GEMINI_API_KEY.strip()
     genai.configure(api_key=clean_key)
@@ -34,7 +41,7 @@ Entrez.email = MY_EMAIL
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
     try:
-        # 최근 48시간(2일) 이내 논문만 검색
+        # 최근 48시간(2일) 이내 논문만 검색 (중복 방지)
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=2, datetype="pdat")
         record = Entrez.read(handle)
@@ -59,8 +66,10 @@ def fetch_pubmed_papers(keyword, max_results=5):
         try:
             citation = article['MedlineCitation']
             article_data = citation['Article']
+            
             title = article_data['ArticleTitle']
             journal = article_data['Journal'].get('Title', 'Unknown Journal')
+            
             pmid = citation['PMID']
             link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
@@ -81,15 +90,16 @@ def fetch_pubmed_papers(keyword, max_results=5):
     return papers
 
 # ==========================================
-# [기능 2] Gemini 요약 (스마트 재시도 기능 추가)
+# [기능 2] Gemini 요약 (2.5 버전 적용)
 # ==========================================
 def summarize_paper(title, abstract):
     if not GEMINI_API_KEY:
         return "오류: API 키가 없습니다."
 
-    # 1차 시도: 최신 모델 (flash)
+    # [수정됨] 선생님 키에서 사용 가능한 최신 모델 'gemini-2.5-flash' 적용
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.5-flash')
+        
         prompt = f"""
         아래 정형외과 논문을 한국어로 핵심만 3줄 요약하세요.
         제목: {title}
@@ -102,19 +112,14 @@ def summarize_paper(title, abstract):
         response = model.generate_content(prompt)
         return response.text
         
-    except Exception as first_error:
-        # [핵심 수정 2] 실패 시 자동으로 'pro' 모델로 재시도
+    except Exception as e:
+        # 혹시 몰라 2.0 버전으로 재시도하는 안전장치 추가
         try:
-            model = genai.GenerativeModel('gemini-pro')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content(prompt)
             return response.text
-        except Exception as second_error:
-            # [핵심 수정 3] 둘 다 실패하면, '내 키로 쓸 수 있는 모델 목록'을 에러 메시지에 띄움 (진단용)
-            try:
-                my_models = [m.name for m in genai.list_models()]
-                return f"요약 실패. (내 키로 사용 가능한 모델: {my_models}) / 에러: {second_error}"
-            except:
-                return f"치명적 오류: API 키가 잘못되었거나 권한이 없습니다. ({first_error})"
+        except:
+            return f"요약 실패 (에러: {e})"
 
 # ==========================================
 # [기능 3] 이메일 전송
@@ -125,59 +130,4 @@ def send_email(content_html):
 
     msg = MIMEText(content_html, 'html')
     today = datetime.now().strftime('%Y-%m-%d')
-    msg['Subject'] = f"📢 [매일 아침] {today} 정형외과 최신 논문 리포트"
-    msg['From'] = MY_EMAIL
-    msg['To'] = RECEIVER_EMAIL
-
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(MY_EMAIL, MY_APP_PASSWORD)
-            server.send_message(msg)
-        print("✅ 이메일 발송 완료")
-    except Exception as e:
-        print(f"❌ 발송 실패: {e}")
-
-# ==========================================
-# [실행] 메인 컨트롤러
-# ==========================================
-def main():
-    html_body = "<h2>📅 최근 48시간 내 발표된 주요 논문</h2><hr>"
-    total_papers_found = 0
-
-    for keyword in SEARCH_KEYWORDS:
-        papers = fetch_pubmed_papers(keyword, max_results=5)
-        
-        html_body += f"<h3 style='color: #2E86C1; border-left: 5px solid #2E86C1; padding-left: 10px;'>🔍 {keyword}</h3>"
-
-        if not papers:
-            html_body += "<p style='color: gray; font-style: italic;'>최근 2일간 새로 등록된 논문이 없습니다.</p><br>"
-            continue
-
-        for i, paper in enumerate(papers, 1):
-            summary = summarize_paper(paper['title'], paper['abstract'])
-            summary_html = summary.replace('\n', '<br>')
-            
-            html_body += f"""
-            <div style='background-color: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
-                <p style='font-size: 16px; font-weight: bold; margin-top: 0;'>
-                    <a href='{paper['link']}' target='_blank' style='text-decoration: none; color: #1e4f91;'>
-                        [{i}] {paper['title']}
-                    </a>
-                </p>
-                <p style='color: #666; font-size: 12px; margin-bottom: 10px;'>📖 Journal: {paper['journal']}</p>
-                <div style='background-color: #ffffff; padding: 12px; border: 1px solid #eee; border-radius: 4px; line-height: 1.6;'>
-                    {summary_html}
-                </div>
-            </div>
-            """
-            total_papers_found += 1
-        
-        html_body += "<br>"
-
-    if total_papers_found > 0:
-        send_email(html_body)
-    else:
-        print("새로운 논문이 하나도 없어 메일을 보내지 않았습니다.")
-
-if __name__ == "__main__":
-    main()
+    msg['Subject'] = f"📢 [매일 아침] {today} 정형외과 최신 논
