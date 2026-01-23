@@ -12,9 +12,12 @@ from datetime import datetime
 
 def get_book_recommendation():
     """
-    Google Gemini 1.5 Flash API (REST) 호출
-    모델명을 구체적으로 지정하여 404 에러 방지
+    [성공 공식 적용]
+    1. 모델명: 'gemini-1.5-flash' (latest 삭제)
+    2. 엔드포인트: v1beta
+    3. 라이브러리: urllib (호환성 문제 해결)
     """
+    # 1. GitHub Secrets에서 새 키 가져오기
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         return "오류: GEMINI_API_KEY가 설정되지 않았습니다."
@@ -31,9 +34,10 @@ def get_book_recommendation():
     ]
     today_theme = random.choice(themes)
 
-    # [수정 핵심] 모델 이름 뒤에 '-latest'를 붙여서 명확하게 지정
-    # gemini-1.5-flash -> gemini-1.5-flash-latest
-    model_name = "gemini-1.5-flash-latest"
+    # [핵심 1] 군더더기 없는 정확한 모델명 사용
+    model_name = "gemini-1.5-flash" 
+    
+    # [핵심 2] v1beta 엔드포인트 사용
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
     prompt = f"""
@@ -54,6 +58,7 @@ def get_book_recommendation():
     data = json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
 
+    # [핵심 3] 재시도 로직 (429 에러 대비)
     for attempt in range(3):
         try:
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -68,38 +73,40 @@ def get_book_recommendation():
                     return f"파싱 오류: {response_body}"
 
         except urllib.error.HTTPError as e:
-            error_msg = e.read().decode("utf-8")
-            # 404가 또 뜨면, 구글의 'Gemini Pro' (가장 안정적인 구형 모델)로 자동 전환 시도
-            if e.code == 404:
-                print("⚠️ 1.5 Flash 모델을 찾지 못해 'gemini-pro'로 재시도합니다.")
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
-                continue # 다음 루프에서 gemini-pro로 재시도
-                
-            if e.code == 429: 
+            error_content = e.read().decode("utf-8")
+            # 429 = 사용량 제한 (잠시 대기 후 재시도)
+            if e.code == 429:
+                print(f"⚠️ 사용량 제한(429) 감지. 5초 후 재시도... ({attempt+1}/3)")
                 time.sleep(5)
                 continue
-            return f"HTTP 오류 ({e.code}): {error_msg}"
+            # 404 = 모델명 오류 (이 코드에선 발생 안 해야 정상)
+            return f"HTTP 오류 ({e.code}): {e.reason}\n상세: {error_content}"
         except Exception as e:
             return f"알 수 없는 오류: {str(e)}"
 
-    return "❌ 재시도 실패. (모델 연결 오류)"
+    return "❌ 3회 재시도 실패. (새 프로젝트 키가 맞는지 확인해주세요)"
 
 def send_email(content):
     sender_email = os.environ.get("MY_EMAIL", "").strip()
     sender_password = os.environ.get("MY_APP_PASSWORD", "").strip()
     
+    # [수정] 수신자 이메일이 Secrets에 없으면 발신자와 동일하게 설정
+    receiver_email = os.environ.get("RECEIVER_EMAIL", "").strip()
+    if not receiver_email:
+        receiver_email = sender_email
+
     if not sender_email or not sender_password:
         print("❌ 이메일 설정 누락")
         return
 
     msg = MIMEMultipart()
     msg["From"] = sender_email
-    msg["To"] = sender_email
+    msg["To"] = receiver_email
     today = datetime.now().strftime("%Y-%m-%d")
-    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Final)"
+    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Gemini 1.5)"
 
     body = f"""
-    원장님, 드디어 성공했습니다.
+    원장님, 성공 사례 분석 결과로 수정한 코드입니다.
     
     ==================================================
     {content}
@@ -111,12 +118,13 @@ def send_email(content):
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, sender_email, msg.as_string())
+            server.sendmail(sender_email, receiver_email, msg.as_string())
         print("✅ 이메일 발송 성공")
     except Exception as e:
         print(f"❌ 이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
+    print("Gemini 1.5 Flash (검증된 설정) 호출 중...")
     result = get_book_recommendation()
     print(result)
     send_email(result)
