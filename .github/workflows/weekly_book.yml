@@ -1,0 +1,31 @@
+name: Weekly Book Curation
+
+on:
+  schedule:
+    # 한국 시간 토요일 아침 8시 (UTC 금요일 23:00)
+    - cron: '0 23 * * 5'
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  run-book-bot:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install google-generativeai secure-smtplib
+
+    - name: Run Book Curation
+      env:
+        MY_EMAIL: ${{ secrets.MY_EMAIL }}
+        MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+      run: python book_main.py
