@@ -10,16 +10,19 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-def get_book_recommendation():
+def get_book_recommendation_huggingface():
     """
-    urllib을 사용하여 Google Gemini API (REST)를 직접 호출합니다.
-    429(Too Many Requests) 에러 발생 시 대기 후 재시도하는 로직이 포함되어 있습니다.
+    Hugging Face의 무료 Inference API를 사용합니다.
+    카드 등록이나 과금 걱정이 전혀 없습니다.
+    모델: mistralai/Mistral-7B-Instruct-v0.3
     """
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        return "오류: GEMINI_API_KEY가 설정되지 않았습니다."
+    # GitHub Secrets에 'HF_TOKEN'을 저장해야 합니다.
+    api_token = os.environ.get("HF_TOKEN", "").strip()
+    
+    if not api_token:
+        return "오류: HF_TOKEN이 설정되지 않았습니다."
 
-    # 원장님의 관심사 테마 리스트
+    # 1. 테마 선택
     themes = [
         "니체의 철학을 현대적으로 해석한 책",
         "제1차 세계대전과 지정학적 변화를 다룬 역사서",
@@ -32,30 +35,42 @@ def get_book_recommendation():
     ]
     today_theme = random.choice(themes)
 
-    # 모델 설정 (현재 작동 확인된 2.0 버전)
-    model_name = "gemini-2.0-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
-
-    # 프롬프트 구성
-    prompt = f"""
-    당신은 지적인 50대 정형외과 의사를 위한 '독서 큐레이터'입니다.
-    [오늘의 주제] : {today_theme}
-    위 주제와 관련하여, 깊이 있고 통찰력을 주는 책 1권을 추천해주세요.
+    # 2. Hugging Face API 설정
+    # 무료로 쓸 수 있는 고성능 모델 (Mistral)
+    model_id = "mistralai/Mistral-7B-Instruct-v0.3"
+    url = f"https://api-inference.huggingface.co/models/{model_id}"
     
-    [출력 형식]
-    1. 책 제목 / 저자
-    2. 추천 이유 (의사의 관점에서 흥미로울 포인트 3줄 요약)
-    3. 인상 깊은 구절 (한 문장)
+    # 3. 프롬프트 구성 (Mistral 모델 전용 태그 [INST] 사용)
+    prompt = f"""<s>[INST] 당신은 20년 차 정형외과 의사를 위한 지적인 '독서 큐레이터'입니다.
+    아래 주제에 맞춰 깊이 있는 책 1권을 추천해주세요. 
+    반드시 '한국어'로 답변해야 합니다.
+
+    주제: {today_theme}
+
+    [필수 포함 내용]
+    1. 책 제목과 저자
+    2. 추천 이유 (의사의 관점에서 3줄 요약)
+    3. 인상 깊은 구절 (한 문장) [/INST]
     """
 
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 500,  # 답변 길이
+            "temperature": 0.7,     # 창의성
+            "return_full_text": False # 내 질문은 빼고 답변만 받기
+        }
     }
     data = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
 
-    # === [핵심 수정] 재시도(Retry) 로직 추가 ===
-    max_retries = 3  # 최대 3번까지 재시도
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_token}"
+    }
+
+    # 4. API 호출 및 재시도 로직
+    # 무료 서버라 모델이 '잠자고' 있을 때가 있어, 깨우는 시간(Retry)이 필요합니다.
+    max_retries = 5
     for attempt in range(max_retries):
         try:
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
@@ -63,30 +78,27 @@ def get_book_recommendation():
                 response_body = response.read().decode("utf-8")
                 response_json = json.loads(response_body)
                 
-                try:
-                    text = response_json["candidates"][0]["content"]["parts"][0]["text"]
+                # 결과 추출
+                if isinstance(response_json, list) and "generated_text" in response_json[0]:
+                    text = response_json[0]["generated_text"]
                     return f"Selected Theme: [{today_theme}]\n\n{text}"
-                except (KeyError, IndexError) as e:
-                    return f"API 응답 파싱 실패: {e}\n응답: {response_body}"
+                else:
+                    return f"응답 형식 이상함: {response_body}"
 
         except urllib.error.HTTPError as e:
-            # 429 에러(Too Many Requests)인 경우에만 대기 후 재시도
-            if e.code == 429:
-                wait_time = 40  # 구글이 31초를 제안했으므로 넉넉하게 40초 대기
-                print(f"⚠️ 사용량 제한(429) 감지. {wait_time}초 후 재시도합니다... (시도 {attempt+1}/{max_retries})")
-                time.sleep(wait_time)
-                continue  # 다음 루프로 이동 (재시도)
+            error_msg = e.read().decode("utf-8")
+            
+            # 503 에러 = "모델 로딩 중" (무료라 자주 발생) -> 기다리면 해결됨
+            if e.code == 503:
+                print(f"⚠️ 모델 로딩 중 (503). 20초 대기 후 재시도... ({attempt+1}/{max_retries})")
+                time.sleep(20)
+                continue
             else:
-                # 429가 아닌 다른 에러는 즉시 보고
-                error_content = e.read().decode("utf-8")
-                return f"HTTP 에러 ({e.code}): {e.reason}\n상세: {error_content}"
-        
-        except urllib.error.URLError as e:
-            return f"연결 실패: {e.reason}"
+                return f"HTTP 에러 ({e.code}): {error_msg}"
         except Exception as e:
             return f"알 수 없는 오류: {str(e)}"
 
-    return "❌ 3번의 재시도 후에도 연결에 실패했습니다. (잠시 후 다시 시도해주세요)"
+    return "❌ 서버가 혼잡하여 연결에 실패했습니다. 나중에 다시 시도해주세요."
 
 def send_email(content):
     sender_email = os.environ.get("MY_EMAIL", "").strip()
@@ -102,11 +114,11 @@ def send_email(content):
     msg["To"] = receiver_email
     
     today = datetime.now().strftime("%Y-%m-%d")
-    msg["Subject"] = f"[{today}] 오늘의 정형외과 의사 추천 도서"
+    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Hugging Face)"
 
     body = f"""
     원장님, 좋은 아침입니다.
-    오늘의 영감을 위한 책 추천입니다.
+    오늘의 영감을 위한 책 추천입니다. (Powered by Hugging Face Mistral)
     
     ==================================================
     {content}
@@ -126,7 +138,8 @@ def send_email(content):
         print(f"이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    print("Gemini 2.0 모델로 책 추천 생성 중...")
-    recommendation = get_book_recommendation()
+    print("Hugging Face API 호출 중...")
+    recommendation = get_book_recommendation_huggingface()
+    print("결과 확인:")
     print(recommendation)
     send_email(recommendation)
