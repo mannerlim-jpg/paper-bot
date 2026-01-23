@@ -7,13 +7,13 @@ from datetime import datetime
 import google.generativeai as genai
 
 # ==========================================
-# [설정] 환경 변수 가져오기 (안전장치 강화)
+# [설정] 환경 변수 가져오기
 # ==========================================
 MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 받는 사람 설정이 없거나 비어있으면 -> 내 이메일로 설정
+# 받는 사람 설정이 없으면 내 메일로 전송 (안전장치)
 env_receiver = os.getenv("RECEIVER_EMAIL")
 if not env_receiver: 
     RECEIVER_EMAIL = MY_EMAIL
@@ -27,7 +27,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY.strip())
 
 # ==========================================
-# [기능] 책 추천 생성
+# [기능] 책 추천 생성 (가장 안전한 표준 모델 사용)
 # ==========================================
 def get_book_recommendation():
     if not GEMINI_API_KEY:
@@ -61,9 +61,9 @@ def get_book_recommendation():
     """
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # [핵심 변경] 1.5-flash 대신 호환성이 완벽한 'gemini-pro' 사용
+        model = genai.GenerativeModel('gemini-pro')
         response = model.generate_content(prompt)
-        # 줄바꿈 처리 및 HTML 꾸미기
         return f"<h3>🎨 오늘의 테마: {today_theme}</h3><hr><br>" + response.text.replace('\n', '<br>')
     except Exception as e:
         return f"<h3>추천 실패</h3><p>AI 응답 중 에러 발생: {e}</p>"
@@ -79,13 +79,12 @@ def send_email(content_html):
     msg = MIMEText(content_html, 'html', 'utf-8')
     today = datetime.now().strftime('%Y-%m-%d')
     
-    # 제목 한글 깨짐 방지 처리
     subject = f"📚 [주말의 서재] {today} 책 추천 도착"
     msg['Subject'] = Header(subject, 'utf-8')
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
-    print(f"📧 받는 사람: {RECEIVER_EMAIL}") # 로그로 확인
+    print(f"📧 받는 사람: {RECEIVER_EMAIL}")
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
