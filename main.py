@@ -19,56 +19,37 @@ SEARCH_KEYWORDS = [
     "Arthroscopy"
 ]
 
-print("🚀 [진단 시작] 봇 가동 중...")
-
-# 환경변수 확인
 MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-if not MY_EMAIL: print("❌ 경고: MY_EMAIL 환경변수가 없습니다!")
-if not MY_APP_PASSWORD: print("❌ 경고: MY_APP_PASSWORD 환경변수가 없습니다!")
-if not GEMINI_API_KEY: print("❌ 경고: GEMINI_API_KEY 환경변수가 없습니다!")
-else:
-    print("✅ 환경변수 확인 완료.")
+if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY.strip())
-
-# Entrez 이메일 설정
-if MY_EMAIL:
-    Entrez.email = MY_EMAIL
-else:
-    Entrez.email = "test@test.com"
+Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색 (디버깅 모드 - 30일)
+# [기능 1] 논문 검색 (30일 범위 유지)
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
-    print(f"🔎 검색 시도: '{keyword}' (최근 30일)")
-    
     try:
-        # 30일 검색으로 고정 (테스트용)
+        # 논문이 확실히 나오도록 30일로 설정
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=30, datetype="pdat")
         record = Entrez.read(handle)
         handle.close()
-    except Exception as e:
-        print(f"🚨 [검색 에러] PubMed 접속 실패: {e}")
+    except:
         return []
     
     id_list = record["IdList"]
-    print(f"   👉 발견된 논문 ID: {id_list}")
-    
-    if not id_list:
-        return []
-
     papers = []
+    if not id_list: return []
+
     try:
         handle = Entrez.efetch(db="pubmed", id=id_list, retmode="xml")
         records = Entrez.read(handle)
         handle.close()
-    except Exception as e:
-        print(f"🚨 [다운로드 에러] 상세 정보 가져오기 실패: {e}")
+    except:
         return []
 
     for article in records['PubmedArticle']:
@@ -87,92 +68,115 @@ def fetch_pubmed_papers(keyword, max_results=5):
                 abstract = "초록 없음"
             
             papers.append({"title": title, "abstract": abstract, "journal": journal, "link": link})
-        except Exception as e:
-            print(f"⚠️ 파싱 건너뜀: {e}")
+        except:
             continue
-            
-    print(f"   ✅ 처리 완료: {len(papers)}건")
     return papers
 
 # ==========================================
-# [기능 2] Gemini 요약
+# [기능 2] Gemini 임상 판단 (안정성 강화)
 # ==========================================
 def summarize_paper(title, abstract):
-    if not GEMINI_API_KEY: return "N", "키 없음", "내용 없음"
+    if not GEMINI_API_KEY: return "N", "API 키 없음", "설정 확인 필요"
 
     prompt = f"""
     당신은 정형외과 전문의입니다.
+    
     [분석 지침]
-    1. 이 논문이 기존 임상 관행을 바꾸거나 도전합니까? (Yes/No)
-    2. 환자에게 30초 설명 (구어체 한 문장)
-    3. 상세 리뷰 (배경/결과/비판)
-    [출력 형식] (Y/N) @ (한문장) @ (상세리뷰)
+    1. 이 논문이 기존 임상 관행(Practice)을 바꾸거나 도전하는 내용입니까? (Yes/No)
+    2. 외래 진료 중 환자에게 30초 안에 설명한다면? (구어체 한 문장)
+    3. 상세 리뷰 작성 (배경/결과/비판)
+
+    [출력 형식] (구분자 @ 사용)
+    (Y/N) @ (환자용 한 문장) @ (상세 리뷰)
+
     [논문] {title} / {abstract}
     """
 
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content(prompt)
-        text = response.text
-        parts = text.split("@")
-        if len(parts) >= 3:
-            return parts[0].strip().upper(), parts[1].strip(), parts[2].strip()
-        else:
-            return "N", "형식 에러", text
-    except Exception as e:
-        print(f"⚠️ [AI 에러] : {e}")
-        return "N", "요약 실패", str(e)
+    for attempt in range(2): 
+        try:
+            # [변경] 2.5 대신 안정적인 2.0 모델 사용
+            model = genai.GenerativeModel('gemini-2.0-flash')
+            response = model.generate_content(prompt)
+            text = response.text
+            
+            parts = text.split("@")
+            if len(parts) >= 3:
+                return parts[0].strip().upper(), parts[1].strip(), parts[2].strip()
+            else:
+                return "N", "형식 오류", text
+        except Exception as e:
+            print(f"⚠️ 에러 발생 ({e}). 재시도 중...")
+            time.sleep(10) # 재시도 전 10초 휴식
+            # [핵심] 실패 시 에러 메시지를 그대로 반환 (메일에서 확인 가능하게)
+            if attempt == 1: return "N", f"요약 실패 (에러: {str(e)})", str(e)
 
 # ==========================================
 # [기능 3] 이메일 전송
 # ==========================================
 def send_email(content_html):
-    if not MY_EMAIL or not MY_APP_PASSWORD: 
-        print("❌ 이메일 전송 실패: 계정 정보가 없습니다.")
-        return
+    if not MY_EMAIL or not MY_APP_PASSWORD: return
 
-    print("📧 이메일 발송 시도 중...")
     msg = MIMEText(content_html, 'html')
     today = datetime.now().strftime('%Y-%m-%d')
-    msg['Subject'] = f"📢 [Dr.AI] {today} 정형외과 논문 브리핑 (진단 리포트)"
+    msg['Subject'] = f"📢 [Dr.AI] {today} 정형외과 논문 브리핑"
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-            server.login(MY_EMAIL, MY_APP_PASSWORD)
-            server.send_message(msg)
-        print("✅ 이메일 발송 성공!")
-    except Exception as e:
-        print(f"❌ 이메일 발송 에러: {e}")
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+        server.login(MY_EMAIL, MY_APP_PASSWORD)
+        server.send_message(msg)
+    print("✅ 이메일 발송 완료")
 
 # ==========================================
-# [실행]
+# [실행] 메인 컨트롤러
 # ==========================================
 def main():
-    html_body = "<h2>👨‍⚕️ 진단 모드 리포트</h2><hr>"
+    html_body = """
+    <h2 style='color:#2c3e50;'>👨‍⚕️ 오늘의 정형외과 논문 인사이트</h2>
+    <p style='color:gray; font-size:12px;'>* 🚨: 임상 관행 변화 가능성 있음</p>
+    <hr>
+    """
     total_papers = 0
 
     for keyword in SEARCH_KEYWORDS:
-        # 테스트를 위해 검색어당 2개씩만
-        papers = fetch_pubmed_papers(keyword, max_results=2) 
+        # 테스트를 위해 2개씩만 검색 (너무 많으면 오래 걸림)
+        papers = fetch_pubmed_papers(keyword, max_results=2)
         
         if not papers: continue
 
         for i, paper in enumerate(papers, 1):
-            if total_papers > 0: time.sleep(5)
+            # [속도 조절] 15초 대기 (안전 운전)
+            if total_papers > 0: 
+                print(f"[{total_papers}번째 완료] 15초 대기 중...")
+                time.sleep(15)
 
-            print(f"   🤖 AI 분석 중: {paper['title'][:30]}...")
             impact, one_liner, deep_rev = summarize_paper(paper['title'], paper['abstract'])
-            
             deep_rev_html = deep_rev.replace('\n', '<br>')
-            html_body += f"<h3>{paper['title']}</h3><p><b>환자용:</b> {one_liner}</p><hr>"
+
+            if "Y" in impact:
+                badge = "<span style='background-color:#e74c3c; color:white; padding:3px 8px; border-radius:4px; font-size:12px;'>🚨 주목</span>"
+                bg_color = "#fff5f5"
+            else:
+                badge = "<span style='background-color:#95a5a6; color:white; padding:3px 8px; border-radius:4px; font-size:12px;'>✅ 일반</span>"
+                bg_color = "#ffffff"
+
+            html_body += f"""
+            <div style='background-color: {bg_color}; border: 1px solid #dfe6e9; border-radius: 8px; margin-bottom: 15px; padding: 15px;'>
+                <p style='font-size: 16px; font-weight: bold; margin: 0 0 5px 0;'>
+                    {badge} <a href='{paper['link']}' target='_blank' style='text-decoration: none; color: #2c3e50;'>[{i}] {paper['title']}</a>
+                </p>
+                <div style='background-color: #ecf0f1; padding: 10px; border-left: 4px solid #3498db; font-size: 14px; margin: 10px 0;'>
+                    <strong>🗣️ 환자용:</strong> "{one_liner}"
+                </div>
+                <details>
+                    <summary style='cursor: pointer; color: #7f8c8d; font-size: 13px;'>🔽 상세 리뷰 보기</summary>
+                    <div style='padding-top: 10px; font-size: 14px; line-height: 1.6; color: #444;'>{deep_rev_html}</div>
+                </details>
+            </div>
+            """
             total_papers += 1
 
-    if total_papers > 0:
-        send_email(html_body)
-    else:
-        print("🛑 [결과] 수집된 논문이 0건이라 메일을 보내지 않았습니다.")
+    if total_papers > 0: send_email(html_body)
 
 if __name__ == "__main__":
     main()
