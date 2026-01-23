@@ -96,7 +96,7 @@ def summarize_paper(title, abstract):
         return "오류: API 키가 없습니다."
 
     # 최신 모델 사용 (속도 빠름, 구형 키 호환성 좋음)
-    model = genai.GenerativeModel('gemini-pro')
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
     prompt = f"""
     아래 정형외과 논문을 한국어로 핵심만 3줄 요약하세요.
