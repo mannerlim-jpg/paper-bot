@@ -37,7 +37,7 @@ def get_book_recommendation_huggingface():
 
     # 2. Hugging Face API 주소 (최신 주소로 변경됨)
     model_id = "mistralai/Mistral-7B-Instruct-v0.3"
-    # [수정] api-inference -> router 로 변경
+    # [수정] api-inference -> router 로 변경 완료
     url = f"https://router.huggingface.co/models/{model_id}"
     
     # 3. 프롬프트 (한국어 답변 요청)
@@ -56,7 +56,7 @@ def get_book_recommendation_huggingface():
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 1000, # 답변 길이 조금 더 넉넉하게
+            "max_new_tokens": 1000,
             "temperature": 0.7,
             "return_full_text": False
         }
@@ -74,4 +74,65 @@ def get_book_recommendation_huggingface():
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req) as response:
                 response_body = response.read().decode("utf-8")
-                response_json =
+                # [중요] 여기가 아까 잘렸던 부분입니다! 꼭 확인하세요.
+                response_json = json.loads(response_body)
+                
+                if isinstance(response_json, list) and "generated_text" in response_json[0]:
+                    text = response_json[0]["generated_text"]
+                    return f"Selected Theme: [{today_theme}]\n\n{text}"
+                else:
+                    return f"응답 형식 이상함: {response_body}"
+
+        except urllib.error.HTTPError as e:
+            error_msg = e.read().decode("utf-8")
+            if e.code == 503:
+                print(f"⚠️ 모델 로딩 중 (503)... 20초 후 재시도 ({attempt+1}/{max_retries})")
+                time.sleep(20)
+                continue
+            return f"HTTP 에러 ({e.code}): {error_msg}"
+        except Exception as e:
+            return f"알 수 없는 오류: {str(e)}"
+
+    return "❌ 서버 연결 실패 (잠시 후 다시 시도해주세요)"
+
+def send_email(content):
+    sender_email = os.environ.get("MY_EMAIL", "").strip()
+    sender_password = os.environ.get("MY_APP_PASSWORD", "").strip()
+    receiver_email = sender_email
+
+    if not sender_email or not sender_password:
+        print("❌ [오류] 이메일 설정이 누락되었습니다.")
+        return
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = receiver_email
+    today = datetime.now().strftime("%Y-%m-%d")
+    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Mistral AI)"
+
+    body = f"""
+    원장님, 좋은 아침입니다.
+    오늘의 영감을 위한 책 추천입니다. (Mistral AI)
+    
+    ==================================================
+    {content}
+    ==================================================
+    
+    오늘도 평온하고 의미 있는 하루 보내시길 바랍니다.
+    """
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+        print("✅ 이메일 발송 성공!")
+    except Exception as e:
+        print(f"❌ 이메일 발송 실패: {e}")
+
+if __name__ == "__main__":
+    print("책 추천 생성 시작...")
+    recommendation = get_book_recommendation_huggingface()
+    print("결과 내용:\n", recommendation)
+    send_email(recommendation)
