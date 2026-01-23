@@ -15,13 +15,19 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # 받는 사람 (없으면 나에게)
 env_receiver = os.getenv("RECEIVER_EMAIL")
-RECEIVER_EMAIL = env_receiver if env_receiver else MY_EMAIL
+if not env_receiver:
+    RECEIVER_EMAIL = MY_EMAIL
+else:
+    RECEIVER_EMAIL = env_receiver
 
 # ==========================================
-# [설정] Gemini 연결 (선생님 픽: 2.0 모델)
+# [설정] Gemini 연결 (2.0 모델 재시도)
 # ==========================================
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY.strip())
+    try:
+        genai.configure(api_key=GEMINI_API_KEY.strip())
+    except Exception as e:
+        print(f"설정 오류: {e}")
 
 def get_book_recommendation():
     if not GEMINI_API_KEY:
@@ -46,17 +52,3 @@ def get_book_recommendation():
     [오늘의 주제] : {today_theme}
     
     위 주제와 관련하여, 깊이 있고 통찰력을 주는 책 1권을 추천해주세요.
-    (너무 뻔한 베스트셀러보다는, 숨겨진 명작이나 깊이 있는 책을 선호합니다.)
-
-    [출력 형식]
-    1. 책 제목 / 저자
-    2. 추천 이유 (의사의 관점에서 흥미로울 포인트 3줄 요약)
-    3. 인상 깊은 구절 (한 문장)
-    """
-
-    try:
-        # [핵심] 아까 연결은 성공했던 그 모델 (2.0)
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        response = model.generate_content(prompt)
-        return f"<h3>🎨 오늘의 테마: {today_theme}</h3><hr><br>" + response.text.replace('\n', '<br>')
-    except Exception as e:
