@@ -12,15 +12,15 @@ from datetime import datetime
 
 def get_book_recommendation_huggingface():
     """
-    Hugging Face의 무료 Inference API를 사용합니다.
-    카드 등록이나 과금 걱정이 전혀 없습니다.
+    Hugging Face의 무료 Inference API를 사용합니다. (카드 등록 X)
     모델: mistralai/Mistral-7B-Instruct-v0.3
     """
-    # GitHub Secrets에 'HF_TOKEN'을 저장해야 합니다.
+    # GitHub Secrets에서 가져온 토큰
     api_token = os.environ.get("HF_TOKEN", "").strip()
     
     if not api_token:
-        return "오류: HF_TOKEN이 설정되지 않았습니다."
+        print("❌ [오류] 시스템 환경변수에서 HF_TOKEN을 찾을 수 없습니다.")
+        return "오류: HF_TOKEN이 설정되지 않았습니다. (YAML 파일을 확인해주세요)"
 
     # 1. 테마 선택
     themes = [
@@ -35,12 +35,11 @@ def get_book_recommendation_huggingface():
     ]
     today_theme = random.choice(themes)
 
-    # 2. Hugging Face API 설정
-    # 무료로 쓸 수 있는 고성능 모델 (Mistral)
+    # 2. Hugging Face API 주소
     model_id = "mistralai/Mistral-7B-Instruct-v0.3"
     url = f"https://api-inference.huggingface.co/models/{model_id}"
     
-    # 3. 프롬프트 구성 (Mistral 모델 전용 태그 [INST] 사용)
+    # 3. 프롬프트 (한국어 답변 요청)
     prompt = f"""<s>[INST] 당신은 20년 차 정형외과 의사를 위한 지적인 '독서 큐레이터'입니다.
     아래 주제에 맞춰 깊이 있는 책 1권을 추천해주세요. 
     반드시 '한국어'로 답변해야 합니다.
@@ -56,20 +55,18 @@ def get_book_recommendation_huggingface():
     payload = {
         "inputs": prompt,
         "parameters": {
-            "max_new_tokens": 500,  # 답변 길이
-            "temperature": 0.7,     # 창의성
-            "return_full_text": False # 내 질문은 빼고 답변만 받기
+            "max_new_tokens": 800,
+            "temperature": 0.7,
+            "return_full_text": False
         }
     }
     data = json.dumps(payload).encode("utf-8")
-
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_token}"
     }
 
-    # 4. API 호출 및 재시도 로직
-    # 무료 서버라 모델이 '잠자고' 있을 때가 있어, 깨우는 시간(Retry)이 필요합니다.
+    # 4. 재시도 로직 (무료 서버라 모델 로딩 시간이 필요할 수 있음)
     max_retries = 5
     for attempt in range(max_retries):
         try:
@@ -78,7 +75,6 @@ def get_book_recommendation_huggingface():
                 response_body = response.read().decode("utf-8")
                 response_json = json.loads(response_body)
                 
-                # 결과 추출
                 if isinstance(response_json, list) and "generated_text" in response_json[0]:
                     text = response_json[0]["generated_text"]
                     return f"Selected Theme: [{today_theme}]\n\n{text}"
@@ -87,18 +83,15 @@ def get_book_recommendation_huggingface():
 
         except urllib.error.HTTPError as e:
             error_msg = e.read().decode("utf-8")
-            
-            # 503 에러 = "모델 로딩 중" (무료라 자주 발생) -> 기다리면 해결됨
             if e.code == 503:
-                print(f"⚠️ 모델 로딩 중 (503). 20초 대기 후 재시도... ({attempt+1}/{max_retries})")
+                print(f"⚠️ 모델 로딩 중 (503)... 20초 후 재시도 ({attempt+1}/{max_retries})")
                 time.sleep(20)
                 continue
-            else:
-                return f"HTTP 에러 ({e.code}): {error_msg}"
+            return f"HTTP 에러 ({e.code}): {error_msg}"
         except Exception as e:
             return f"알 수 없는 오류: {str(e)}"
 
-    return "❌ 서버가 혼잡하여 연결에 실패했습니다. 나중에 다시 시도해주세요."
+    return "❌ 서버 연결 실패 (잠시 후 다시 시도해주세요)"
 
 def send_email(content):
     sender_email = os.environ.get("MY_EMAIL", "").strip()
@@ -106,19 +99,18 @@ def send_email(content):
     receiver_email = sender_email
 
     if not sender_email or not sender_password:
-        print("이메일 설정 누락")
+        print("❌ [오류] 이메일 설정(MY_EMAIL 등)이 누락되었습니다.")
         return
 
     msg = MIMEMultipart()
     msg["From"] = sender_email
     msg["To"] = receiver_email
-    
     today = datetime.now().strftime("%Y-%m-%d")
     msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Hugging Face)"
 
     body = f"""
     원장님, 좋은 아침입니다.
-    오늘의 영감을 위한 책 추천입니다. (Powered by Hugging Face Mistral)
+    오늘의 영감을 위한 책 추천입니다. (Mistral AI)
     
     ==================================================
     {content}
@@ -133,13 +125,12 @@ def send_email(content):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, receiver_email, msg.as_string())
-        print("이메일 발송 완료")
+        print("✅ 이메일 발송 성공!")
     except Exception as e:
-        print(f"이메일 발송 실패: {e}")
+        print(f"❌ 이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    print("Hugging Face API 호출 중...")
+    print("책 추천 생성 시작...")
     recommendation = get_book_recommendation_huggingface()
-    print("결과 확인:")
-    print(recommendation)
+    print("결과 내용:\n", recommendation)
     send_email(recommendation)
