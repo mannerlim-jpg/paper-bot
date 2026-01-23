@@ -1,10 +1,11 @@
 import smtplib
 import os
 import random
+import json
+import urllib.request
 from email.mime.text import MIMEText
 from email.header import Header
 from datetime import datetime
-import google.generativeai as genai
 
 # ==========================================
 # [설정] 환경 변수 가져오기
@@ -13,7 +14,7 @@ MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# 받는 사람 설정이 없으면 내 메일로 전송 (안전장치)
+# 받는 사람 설정 (없으면 내 메일로)
 env_receiver = os.getenv("RECEIVER_EMAIL")
 if not env_receiver: 
     RECEIVER_EMAIL = MY_EMAIL
@@ -21,17 +22,11 @@ else:
     RECEIVER_EMAIL = env_receiver
 
 # ==========================================
-# [설정] Gemini 연결
-# ==========================================
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY.strip())
-
-# ==========================================
-# [기능] 책 추천 생성 (가장 안전한 표준 모델 사용)
+# [기능] Gemini 직접 호출 (라이브러리 미사용)
 # ==========================================
 def get_book_recommendation():
     if not GEMINI_API_KEY:
-        return "<h3>API 키 오류</h3><p>Gemini API 키가 설정되지 않았습니다.</p>"
+        return "<h3>API 키 오류</h3><p>Gemini API 키가 없습니다.</p>"
 
     themes = [
         "니체의 철학을 현대적으로 해석한 책",
@@ -46,27 +41,48 @@ def get_book_recommendation():
     
     today_theme = random.choice(themes)
 
-    prompt = f"""
+    # 프롬프트 구성
+    prompt_text = f"""
     당신은 지적인 50대 정형외과 의사를 위한 '독서 큐레이터'입니다.
-    
     [오늘의 주제] : {today_theme}
+    위 주제와 관련하여 깊이 있는 책 1권을 추천해주세요.
     
-    위 주제와 관련하여, 깊이 있고 통찰력을 주는 책 1권을 추천해주세요.
-    (너무 뻔한 베스트셀러보다는, 숨겨진 명작이나 깊이 있는 책을 선호합니다.)
-
     [출력 형식]
     1. 책 제목 / 저자
-    2. 추천 이유 (의사의 관점에서 흥미로울 포인트 3줄 요약)
-    3. 인상 깊은 구절 (한 문장)
+    2. 추천 이유 (의사의 관점에서 흥미로울 포인트)
+    3. 인상 깊은 구절
     """
 
+    # 구글 서버 주소 (1.5 Flash 모델 직통 주소)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY.strip()}"
+    
+    # 데이터 포장
+    data = {
+        "contents": [{
+            "parts": [{"text": prompt_text}]
+        }]
+    }
+    
+    # 전송 및 수신 (표준 라이브러리 사용)
     try:
-        # [핵심 변경] 1.5-flash 대신 호환성이 완벽한 'gemini-pro' 사용
-        model = genai.GenerativeModel('gemini-pro')
-        response = model.generate_content(prompt)
-        return f"<h3>🎨 오늘의 테마: {today_theme}</h3><hr><br>" + response.text.replace('\n', '<br>')
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(data).encode('utf-8'), 
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            
+            # 응답에서 텍스트만 추출
+            if 'candidates' in result and result['candidates']:
+                ai_text = result['candidates'][0]['content']['parts'][0]['text']
+                return f"<h3>🎨 오늘의 테마: {today_theme}</h3><hr><br>" + ai_text.replace('\n', '<br>')
+            else:
+                return "<h3>추천 실패</h3><p>AI가 응답했지만 내용이 비어있습니다.</p>"
+                
     except Exception as e:
-        return f"<h3>추천 실패</h3><p>AI 응답 중 에러 발생: {e}</p>"
+        return f"<h3>연결 실패</h3><p>에러 내용: {e}</p>"
 
 # ==========================================
 # [기능] 이메일 발송
@@ -98,7 +114,7 @@ def send_email(content_html):
 # [실행]
 # ==========================================
 if __name__ == "__main__":
-    print("🤖 독서 큐레이션 시작...")
+    print("🤖 독서 큐레이션 시작 (직접 연결 모드)...")
     content = get_book_recommendation()
     send_email(content)
     print("✅ 완료")
