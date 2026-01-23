@@ -34,7 +34,7 @@ Entrez.email = MY_EMAIL
 def fetch_pubmed_papers(keyword, max_results=5):
     try:
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
-                                sort="relevance", reldate=2, datetype="pdat")
+                                sort="relevance", reldate=7, datetype="pdat")
         record = Entrez.read(handle)
         handle.close()
     except:
