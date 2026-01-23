@@ -1,6 +1,6 @@
 import smtplib
 import os
-import time  # [추가됨] 시간을 세는 도구
+import time
 from email.mime.text import MIMEText
 from Bio import Entrez
 import google.generativeai as genai
@@ -11,10 +11,12 @@ from datetime import datetime
 # ==========================================
 SEARCH_KEYWORDS = [
     "(Total Knee Replacement) AND (Robotic)",
-    "Total Knee Arthroplasty",    
+    "Total Knee Arthroplasty",
+    "Foot",
     "Ankle Instability",
     "(Ankle) AND (Arthroscopy)",
-    "(Knee) AND (Arthroscopy)"
+    "(Knee) AND (Arthroscopy)",
+    "Arthroscopy"
 ]
 
 MY_EMAIL = os.getenv("MY_EMAIL")
@@ -22,14 +24,14 @@ MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-# API 키 설정
+# API 키 공백 제거 및 설정
 if GEMINI_API_KEY:
     clean_key = GEMINI_API_KEY.strip()
     genai.configure(api_key=clean_key)
 Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색
+# [기능 1] 논문 검색 (중복 방지 유지)
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
     try:
@@ -80,7 +82,7 @@ def fetch_pubmed_papers(keyword, max_results=5):
     return papers
 
 # ==========================================
-# [기능 2] Gemini 요약 (2.5 버전)
+# [기능 2] Gemini 심층 리뷰 (업그레이드 됨!)
 # ==========================================
 def summarize_paper(title, abstract):
     if not GEMINI_API_KEY:
@@ -89,26 +91,36 @@ def summarize_paper(title, abstract):
     try:
         model = genai.GenerativeModel('gemini-2.5-flash')
         
+        # [핵심] AI에게 주는 명령서(Prompt)를 대폭 강화했습니다.
         prompt = f"""
-        아래 정형외과 논문을 한국어로 핵심만 3줄 요약하세요.
+        당신은 숙련된 정형외과 전문의(Orthopedic Surgeon)입니다.
+        아래 논문의 초록(Abstract)을 읽고, 동료 의사에게 브리핑하듯이 전문적으로 리뷰해주세요.
+        
+        [지침]
+        1. 단순 번역이 아닌, '대한정형외과학회'에서 통용되는 전문 의학 용어를 사용하세요.
+        2. 문장은 간결하고 명확하게 작성하세요.
+        3. 아래 출력 형식을 엄격히 지키세요.
+
+        [논문 정보]
         제목: {title}
         초록: {abstract}
-        형식:
-        1. 목적:
-        2. 결과:
-        3. 의의:
+        
+        [출력 형식]
+        1. **연구 배경 및 목적**: (왜 이 연구를 했는지 1~2문장으로 요약)
+        2. **주요 결과 및 수치**: (P-value, 환자 수 등 구체적 수치를 포함하여 핵심 결과 요약)
+        3. **비판적 고찰(Critical Review)**: (이 연구의 장점, 또는 한계점이나 주의할 점을 분석)
+        4. **임상적 제언(Take-home Message)**: (임상 현장에서 적용할 점 한 줄 요약)
         """
         response = model.generate_content(prompt)
         return response.text
         
     except Exception as e:
-        # 혹시 실패하면 2.0으로 재시도
         try:
             model = genai.GenerativeModel('gemini-2.0-flash')
             response = model.generate_content(prompt)
             return response.text
         except:
-            return f"요약 실패 (에러: {e})"
+            return f"리뷰 생성 실패 (에러: {e})"
 
 # ==========================================
 # [기능 3] 이메일 전송
@@ -119,7 +131,7 @@ def send_email(content_html):
 
     msg = MIMEText(content_html, 'html')
     today = datetime.now().strftime('%Y-%m-%d')
-    msg['Subject'] = f"📢 [매일 아침] {today} 정형외과 최신 논문 리포트"
+    msg['Subject'] = f"📢 [Deep Review] {today} 정형외과 최신 논문 분석"
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
@@ -135,7 +147,7 @@ def send_email(content_html):
 # [실행] 메인 컨트롤러
 # ==========================================
 def main():
-    html_body = "<h2>📅 최근 48시간 내 발표된 주요 논문</h2><hr>"
+    html_body = "<h2>📅 최근 48시간 내 발표된 논문 심층 리뷰</h2><hr>"
     total_papers_found = 0
 
     for keyword in SEARCH_KEYWORDS:
@@ -147,23 +159,26 @@ def main():
             continue
 
         for i, paper in enumerate(papers, 1):
-            # [핵심] 요약 전에 잠시 쉽니다 (무료 한도 초과 방지)
+            # API 과부하 방지 (15초 대기)
             if i > 1: 
-                print("API 과부하 방지를 위해 15초 대기 중...")
+                print("심층 분석을 위해 잠시 생각 정리 중... (15초 대기)")
                 time.sleep(15)
 
             summary = summarize_paper(paper['title'], paper['abstract'])
             summary_html = summary.replace('\n', '<br>')
             
+            # [디자인 업그레이드] 가독성을 높였습니다
             html_body += f"""
-            <div style='background-color: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);'>
-                <p style='font-size: 16px; font-weight: bold; margin-top: 0;'>
+            <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px; margin-bottom: 30px; border: 1px solid #e9ecef; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
+                <p style='font-size: 18px; font-weight: bold; margin-top: 0; color: #1e4f91;'>
                     <a href='{paper['link']}' target='_blank' style='text-decoration: none; color: #1e4f91;'>
                         [{i}] {paper['title']}
                     </a>
                 </p>
-                <p style='color: #666; font-size: 12px; margin-bottom: 10px;'>📖 Journal: {paper['journal']}</p>
-                <div style='background-color: #ffffff; padding: 12px; border: 1px solid #eee; border-radius: 4px; line-height: 1.6;'>
+                <p style='color: #666; font-size: 13px; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 10px;'>
+                    📖 Journal: <strong>{paper['journal']}</strong>
+                </p>
+                <div style='background-color: #ffffff; padding: 15px; border-radius: 5px; line-height: 1.8; font-size: 15px; color: #333;'>
                     {summary_html}
                 </div>
             </div>
