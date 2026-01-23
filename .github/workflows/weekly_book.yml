@@ -18,14 +18,13 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: Install dependencies
-      run: |
-        pip install google-generativeai secure-smtplib
+    # [수정] 내장 라이브러리만 사용하므로 'pip install' 단계는 삭제했습니다.
+    # (더 빠르고 에러가 없습니다)
 
     - name: Run Book Curation
       env:
+        # [핵심] 여기에 HF_TOKEN을 적어야 파이썬 파일로 열쇠가 전달됩니다.
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
         MY_EMAIL: ${{ secrets.MY_EMAIL }}
         MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
       run: python book_main.py
