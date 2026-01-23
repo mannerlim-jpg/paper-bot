@@ -1,5 +1,6 @@
 import smtplib
 import os
+import time  # [추가됨] 시간을 세는 도구
 from email.mime.text import MIMEText
 from Bio import Entrez
 import google.generativeai as genai
@@ -10,12 +11,10 @@ from datetime import datetime
 # ==========================================
 SEARCH_KEYWORDS = [
     "(Total Knee Replacement) AND (Robotic)",
-    "Total Knee Arthroplasty",
-    "Foot",
+    "Total Knee Arthroplasty",    
     "Ankle Instability",
     "(Ankle) AND (Arthroscopy)",
-    "(Knee) AND (Arthroscopy)",
-    "Arthroscopy"
+    "(Knee) AND (Arthroscopy)"
 ]
 
 MY_EMAIL = os.getenv("MY_EMAIL")
@@ -23,7 +22,7 @@ MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
 
-# API 키 공백 제거
+# API 키 설정
 if GEMINI_API_KEY:
     clean_key = GEMINI_API_KEY.strip()
     genai.configure(api_key=clean_key)
@@ -88,7 +87,6 @@ def summarize_paper(title, abstract):
         return "오류: API 키가 없습니다."
 
     try:
-        # 선생님 키에 맞는 최신 모델 (2.5-flash)
         model = genai.GenerativeModel('gemini-2.5-flash')
         
         prompt = f"""
@@ -121,10 +119,7 @@ def send_email(content_html):
 
     msg = MIMEText(content_html, 'html')
     today = datetime.now().strftime('%Y-%m-%d')
-    
-    # [수정 포인트] 이 부분이 잘리지 않도록 주의하세요!
     msg['Subject'] = f"📢 [매일 아침] {today} 정형외과 최신 논문 리포트"
-    
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
 
@@ -152,6 +147,11 @@ def main():
             continue
 
         for i, paper in enumerate(papers, 1):
+            # [핵심] 요약 전에 잠시 쉽니다 (무료 한도 초과 방지)
+            if i > 1: 
+                print("API 과부하 방지를 위해 15초 대기 중...")
+                time.sleep(15)
+
             summary = summarize_paper(paper['title'], paper['abstract'])
             summary_html = summary.replace('\n', '<br>')
             
