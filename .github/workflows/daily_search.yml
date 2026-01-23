@@ -2,8 +2,8 @@ name: Daily Medical Paper Digest
 
 on:
   schedule:
-    # 매일 한국 시간 아침 7시 (UTC 22:00)
-    - cron: '0 22 * * *'
+    # 매일 한국 시간 아침 6시 (UTC 22:00)
+    - cron: '0 21 * * *'
   workflow_dispatch: # 수동 실행 버튼
 
 jobs:
