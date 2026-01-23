@@ -2,31 +2,37 @@ import smtplib
 import os
 import random
 from email.mime.text import MIMEText
+from email.header import Header
 from datetime import datetime
 import google.generativeai as genai
 
 # ==========================================
-# [설정] 환경 변수 가져오기
+# [설정] 환경 변수 가져오기 (안전장치 강화)
 # ==========================================
 MY_EMAIL = os.getenv("MY_EMAIL")
 MY_APP_PASSWORD = os.getenv("MY_APP_PASSWORD")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", MY_EMAIL)
+
+# 받는 사람 설정이 없거나 비어있으면 -> 내 이메일로 설정
+env_receiver = os.getenv("RECEIVER_EMAIL")
+if not env_receiver: 
+    RECEIVER_EMAIL = MY_EMAIL
+else:
+    RECEIVER_EMAIL = env_receiver
 
 # ==========================================
-# [설정] Gemini 연결 (가장 튼튼한 1.5 모델)
+# [설정] Gemini 연결
 # ==========================================
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY.strip())
 
 # ==========================================
-# [기능] 오늘의 추천 주제 선정 및 AI 추천
+# [기능] 책 추천 생성
 # ==========================================
 def get_book_recommendation():
     if not GEMINI_API_KEY:
-        return "API 키가 없습니다."
+        return "<h3>API 키 오류</h3><p>Gemini API 키가 설정되지 않았습니다.</p>"
 
-    # 선생님의 취향을 반영한 주제 리스트
     themes = [
         "니체의 철학을 현대적으로 해석한 책",
         "제1차 세계대전과 지정학적 변화를 다룬 역사서",
@@ -38,7 +44,6 @@ def get_book_recommendation():
         "의사가 쓴 죽음과 삶에 대한 에세이"
     ]
     
-    # 오늘은 어떤 주제로 할지 랜덤 선택
     today_theme = random.choice(themes)
 
     prompt = f"""
@@ -56,26 +61,31 @@ def get_book_recommendation():
     """
 
     try:
-        # [핵심] 실패 없는 1.5 모델 사용
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
+        # 줄바꿈 처리 및 HTML 꾸미기
         return f"<h3>🎨 오늘의 테마: {today_theme}</h3><hr><br>" + response.text.replace('\n', '<br>')
     except Exception as e:
-        return f"추천 실패 (에러: {e})"
+        return f"<h3>추천 실패</h3><p>AI 응답 중 에러 발생: {e}</p>"
 
 # ==========================================
 # [기능] 이메일 발송
 # ==========================================
 def send_email(content_html):
     if not MY_EMAIL or not MY_APP_PASSWORD:
-        print("❌ 이메일 설정이 없습니다.")
+        print("❌ 이메일 설정 누락")
         return
 
-    msg = MIMEText(content_html, 'html')
+    msg = MIMEText(content_html, 'html', 'utf-8')
     today = datetime.now().strftime('%Y-%m-%d')
-    msg['Subject'] = f"📚 [주말의 서재] {today} 책 추천 도착"
+    
+    # 제목 한글 깨짐 방지 처리
+    subject = f"📚 [주말의 서재] {today} 책 추천 도착"
+    msg['Subject'] = Header(subject, 'utf-8')
     msg['From'] = MY_EMAIL
     msg['To'] = RECEIVER_EMAIL
+
+    print(f"📧 받는 사람: {RECEIVER_EMAIL}") # 로그로 확인
 
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
