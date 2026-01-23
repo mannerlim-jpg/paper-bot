@@ -2,9 +2,8 @@ name: Weekly Book Curation
 
 on:
   schedule:
-    # 한국 시간 토요일 아침 8시 (UTC 금요일 23:00)
     - cron: '0 23 * * 5'
-  workflow_dispatch: # 수동 실행 버튼
+  workflow_dispatch:
 
 jobs:
   run-book-bot:
@@ -18,13 +17,10 @@ jobs:
       with:
         python-version: '3.9'
 
-    # [수정] 내장 라이브러리만 사용하므로 'pip install' 단계는 삭제했습니다.
-    # (더 빠르고 에러가 없습니다)
-
     - name: Run Book Curation
       env:
-        # [핵심] 여기에 HF_TOKEN을 적어야 파이썬 파일로 열쇠가 전달됩니다.
-        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        # 다시 GEMINI_API_KEY를 사용하도록 변경
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         MY_EMAIL: ${{ secrets.MY_EMAIL }}
         MY_APP_PASSWORD: ${{ secrets.MY_APP_PASSWORD }}
       run: python book_main.py
