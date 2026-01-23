@@ -12,15 +12,14 @@ from datetime import datetime
 def get_book_recommendation():
     """
     urllib을 사용하여 Google Gemini API (REST)를 직접 호출합니다.
-    사용자의 관심사 리스트 중 하나를 랜덤으로 선택하여 추천을 받습니다.
     """
-    # API 키 공백 제거 (GitHub Secrets 줄바꿈 오류 방지)
+    # API 키 공백 제거
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     
     if not api_key:
         return "오류: GEMINI_API_KEY가 설정되지 않았습니다."
 
-    # 1. 원장님의 관심사 테마 리스트 (스크린샷 내용 반영)
+    # 1. 원장님의 관심사 테마 리스트 (반영 완료)
     themes = [
         "니체의 철학을 현대적으로 해석한 책",
         "제1차 세계대전과 지정학적 변화를 다룬 역사서",
@@ -32,10 +31,9 @@ def get_book_recommendation():
         "의사가 쓴 죽음과 삶에 대한 에세이"
     ]
     
-    # 오늘의 주제 랜덤 선택
     today_theme = random.choice(themes)
 
-    # 2. 프롬프트 구성 (스크린샷의 디벨롭된 프롬프트 적용)
+    # 2. 프롬프트 구성
     prompt = f"""
     당신은 지적인 50대 정형외과 의사를 위한 '독서 큐레이터'입니다.
 
@@ -50,9 +48,11 @@ def get_book_recommendation():
     3. 인상 깊은 구절 (한 문장)
     """
 
-    # 3. API 엔드포인트 설정 (gemini-1.5-flash)
-    # v1beta 버전을 명시적으로 사용합니다.
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # [중요 변경] 모델명을 'gemini-2.0-flash'로 변경 (1.5 버전 종료됨)
+    model_name = "gemini-2.0-flash"
+    
+    # 3. API 엔드포인트 설정 (v1beta + 2.0 Flash)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
     # 4. 요청 데이터 구성
     payload = {
@@ -72,14 +72,12 @@ def get_book_recommendation():
             
             try:
                 text = response_json["candidates"][0]["content"]["parts"][0]["text"]
-                # 이메일에 오늘의 테마도 같이 표시하기 위해 텍스트 조합
-                result_text = f"selected_theme: [{today_theme}]\n\n{text}"
+                result_text = f"Selected Theme: [{today_theme}]\n\n{text}"
                 return result_text
             except (KeyError, IndexError) as e:
                 return f"API 응답 파싱 실패: {e}\n응답: {response_body}"
                 
     except urllib.error.HTTPError as e:
-        # 에러 상세 내용 읽기
         error_content = e.read().decode("utf-8")
         return f"HTTP 에러 ({e.code}): {e.reason}\n상세: {error_content}"
     except urllib.error.URLError as e:
@@ -88,11 +86,10 @@ def get_book_recommendation():
         return f"알 수 없는 오류: {str(e)}"
 
 def send_email(content):
-    """
-    추천 내용을 이메일로 발송합니다.
-    """
     sender_email = os.environ.get("MY_EMAIL", "").strip()
     sender_password = os.environ.get("MY_APP_PASSWORD", "").strip()
+    
+    # 받는 사람도 본인 이메일로 설정
     receiver_email = sender_email
 
     if not sender_email or not sender_password:
@@ -128,10 +125,8 @@ def send_email(content):
         print(f"이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    print("책 추천 생성 중...")
+    print("Gemini 2.0 모델로 책 추천 생성 중...")
     recommendation = get_book_recommendation()
     
     print(recommendation)
-    
-    print("이메일 전송 시도...")
     send_email(recommendation)
