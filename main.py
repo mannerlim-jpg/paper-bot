@@ -29,11 +29,11 @@ if GEMINI_API_KEY:
 Entrez.email = MY_EMAIL 
 
 # ==========================================
-# [기능 1] 논문 검색 (2일 범위 유지)
+# [기능 1] 논문 검색 (최근 2일 - 데일리 루틴용)
 # ==========================================
 def fetch_pubmed_papers(keyword, max_results=5):
     try:
-        # 논문이 확실히 나오도록 2일로 설정
+        # 선생님 요청대로 reldate=2 (최근 2일)로 설정
         handle = Entrez.esearch(db="pubmed", term=keyword, retmax=max_results, 
                                 sort="relevance", reldate=2, datetype="pdat")
         record = Entrez.read(handle)
@@ -73,7 +73,7 @@ def fetch_pubmed_papers(keyword, max_results=5):
     return papers
 
 # ==========================================
-# [기능 2] Gemini 임상 판단 (안정성 강화)
+# [기능 2] Gemini 임상 판단 (가장 안정적인 1.5 모델 사용)
 # ==========================================
 def summarize_paper(title, abstract):
     if not GEMINI_API_KEY: return "N", "API 키 없음", "설정 확인 필요"
@@ -94,8 +94,8 @@ def summarize_paper(title, abstract):
 
     for attempt in range(2): 
         try:
-            # [변경] 2.5 대신 안정적인 2.0 모델 사용
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            # [핵심 변경] 2.0/2.5 대신 누구나 쓸 수 있는 '1.5-flash' 사용
+            model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(prompt)
             text = response.text
             
@@ -103,12 +103,15 @@ def summarize_paper(title, abstract):
             if len(parts) >= 3:
                 return parts[0].strip().upper(), parts[1].strip(), parts[2].strip()
             else:
+                # 형식이 깨졌을 때 원문이라도 보여줌
                 return "N", "형식 오류", text
         except Exception as e:
             print(f"⚠️ 에러 발생 ({e}). 재시도 중...")
-            time.sleep(10) # 재시도 전 10초 휴식
-            # [핵심] 실패 시 에러 메시지를 그대로 반환 (메일에서 확인 가능하게)
-            if attempt == 1: return "N", f"요약 실패 (에러: {str(e)})", str(e)
+            time.sleep(20) # 재시도 전 20초 휴식
+            
+            # 에러 메시지를 메일에 그대로 띄우지 않고 깔끔하게 처리
+            if attempt == 1: 
+                return "N", "AI 요약 실패 (일시적 오류)", f"상세 에러 내용: {str(e)}"
 
 # ==========================================
 # [기능 3] 이메일 전송
@@ -139,16 +142,16 @@ def main():
     total_papers = 0
 
     for keyword in SEARCH_KEYWORDS:
-        # 테스트를 위해 2개씩만 검색 (너무 많으면 오래 걸림)
-        papers = fetch_pubmed_papers(keyword, max_results=2)
+        # 최근 2일 검색 (데일리용)
+        papers = fetch_pubmed_papers(keyword, max_results=5)
         
         if not papers: continue
 
         for i, paper in enumerate(papers, 1):
-            # [속도 조절] 15초 대기 (안전 운전)
+            # [속도 조절] 30초 대기 (가장 안전한 속도)
             if total_papers > 0: 
-                print(f"[{total_papers}번째 완료] 15초 대기 중...")
-                time.sleep(15)
+                print(f"[{total_papers}번째 완료] 30초 대기 중...")
+                time.sleep(30)
 
             impact, one_liner, deep_rev = summarize_paper(paper['title'], paper['abstract'])
             deep_rev_html = deep_rev.replace('\n', '<br>')
@@ -169,7 +172,7 @@ def main():
                     <strong>🗣️ 환자용:</strong> "{one_liner}"
                 </div>
                 <details>
-                    <summary style='cursor: pointer; color: #7f8c8d; font-size: 13px;'>🔽 상세 리뷰 보기</summary>
+                    <summary style='cursor: pointer; color: #7f8c8d; font-size: 13px;'>🔽 상세 리뷰 보기 (클릭)</summary>
                     <div style='padding-top: 10px; font-size: 14px; line-height: 1.6; color: #444;'>{deep_rev_html}</div>
                 </details>
             </div>
