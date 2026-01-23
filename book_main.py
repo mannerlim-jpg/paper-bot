@@ -10,17 +10,14 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
-def get_book_recommendation_huggingface():
+def get_book_recommendation():
     """
-    Hugging Face의 무료 Inference API를 사용합니다.
-    모델: HuggingFaceH4/zephyr-7b-beta (무료 서버에서 가장 안정적이고 성능 좋은 모델)
+    Google Gemini 1.5 Flash API (REST) 호출
     """
-    # GitHub Secrets에서 가져온 토큰
-    api_token = os.environ.get("HF_TOKEN", "").strip()
-    
-    if not api_token:
-        print("❌ [오류] 시스템 환경변수에서 HF_TOKEN을 찾을 수 없습니다.")
-        return "오류: HF_TOKEN이 설정되지 않았습니다. (YAML 파일을 확인해주세요)"
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        print("❌ API 키가 없습니다.")
+        return "설정 오류: GEMINI_API_KEY 없음"
 
     # 1. 테마 선택
     themes = [
@@ -35,94 +32,77 @@ def get_book_recommendation_huggingface():
     ]
     today_theme = random.choice(themes)
 
-    # 2. Hugging Face API 주소 및 모델 설정 (Zephyr 모델 사용)
-    model_id = "HuggingFaceH4/zephyr-7b-beta"
-    url = f"https://api-inference.huggingface.co/models/{model_id}"
+    # 2. 정확한 엔드포인트 (gemini-1.5-flash)
+    # v1beta 버전을 사용해야 최신 모델 접근이 원활합니다.
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+
+    # 3. 프롬프트
+    prompt = f"""
+    당신은 정형외과 의사를 위한 독서 큐레이터입니다.
+    다음 주제에 맞는 책 1권을 한국어로 추천해주세요.
     
-    # 3. 프롬프트 (Zephyr 모델은 <|system|> 태그를 좋아합니다)
-    prompt = f"""<|system|>
-    당신은 20년 차 정형외과 의사를 위한 지적인 '독서 큐레이터'입니다.
-    반드시 '한국어'로 답변해야 합니다.</s>
-    <|user|>
-    아래 주제에 맞춰 깊이 있는 책 1권을 추천해주세요.
-
     주제: {today_theme}
-
-    [필수 포함 내용]
-    1. 책 제목과 저자
-    2. 추천 이유 (의사의 관점에서 3줄 요약)
-    3. 인상 깊은 구절 (한 문장)</s>
-    <|assistant|>
+    
+    형식:
+    1. 책 제목 / 저자
+    2. 추천 이유 (3줄 요약)
+    3. 인상 깊은 구절
     """
 
     payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_new_tokens": 1000,
-            "temperature": 0.7,
-            "return_full_text": False
-        }
+        "contents": [{"parts": [{"text": prompt}]}]
     }
     data = json.dumps(payload).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_token}"
-    }
+    headers = {"Content-Type": "application/json"}
 
-    # 4. 재시도 로직
-    max_retries = 5
-    for attempt in range(max_retries):
+    # 4. API 호출 (재시도 로직 포함)
+    for attempt in range(3):
         try:
             req = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(req) as response:
                 response_body = response.read().decode("utf-8")
-                
-                # [수정 완료] 아까 잘렸던 부분이 여기입니다!
                 response_json = json.loads(response_body)
                 
-                if isinstance(response_json, list) and "generated_text" in response_json[0]:
-                    text = response_json[0]["generated_text"]
+                # 응답 파싱
+                try:
+                    text = response_json["candidates"][0]["content"]["parts"][0]["text"]
                     return f"Selected Theme: [{today_theme}]\n\n{text}"
-                else:
-                    return f"응답 형식 이상함: {response_body}"
+                except (KeyError, IndexError):
+                    return f"파싱 오류: {response_body}"
 
         except urllib.error.HTTPError as e:
             error_msg = e.read().decode("utf-8")
-            # 503 (로딩중) 처리 - 무료 모델은 깨우는데 시간이 걸릴 수 있음
-            if e.code == 503:
-                print(f"⚠️ 모델 로딩 중 (503)... 20초 후 재시도 ({attempt+1}/{max_retries})")
-                time.sleep(20)
+            # 429(Too Many Requests)는 잠시 대기
+            if e.code == 429:
+                print(f"⚠️ 429 오류 (사용량 제한). 10초 대기 후 재시도... ({attempt+1}/3)")
+                time.sleep(10)
                 continue
-            return f"HTTP 에러 ({e.code}): {error_msg}"
+            return f"HTTP 오류 ({e.code}): {error_msg}"
         except Exception as e:
             return f"알 수 없는 오류: {str(e)}"
 
-    return "❌ 서버 연결 실패 (잠시 후 다시 시도해주세요)"
+    return "❌ 3회 재시도 실패. API 키 권한이나 할당량을 확인해주세요."
 
 def send_email(content):
     sender_email = os.environ.get("MY_EMAIL", "").strip()
     sender_password = os.environ.get("MY_APP_PASSWORD", "").strip()
-    receiver_email = sender_email
-
+    
     if not sender_email or not sender_password:
-        print("❌ [오류] 이메일 설정이 누락되었습니다.")
+        print("❌ 이메일 설정 누락")
         return
 
     msg = MIMEMultipart()
     msg["From"] = sender_email
-    msg["To"] = receiver_email
+    msg["To"] = sender_email
     today = datetime.now().strftime("%Y-%m-%d")
-    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Zephyr AI)"
+    msg["Subject"] = f"[{today}] 오늘의 추천 도서 (Gemini 1.5 Flash)"
 
     body = f"""
-    원장님, 좋은 아침입니다.
-    오늘의 영감을 위한 책 추천입니다. (Powered by Zephyr)
+    원장님, Gemini 1.5 Flash 추천 결과입니다.
     
     ==================================================
     {content}
     ==================================================
-    
-    오늘도 평온하고 의미 있는 하루 보내시길 바랍니다.
     """
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
@@ -130,13 +110,13 @@ def send_email(content):
         context = ssl.create_default_context()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
             server.login(sender_email, sender_password)
-            server.sendmail(sender_email, receiver_email, msg.as_string())
-        print("✅ 이메일 발송 성공!")
+            server.sendmail(sender_email, sender_email, msg.as_string())
+        print("✅ 이메일 발송 성공")
     except Exception as e:
         print(f"❌ 이메일 발송 실패: {e}")
 
 if __name__ == "__main__":
-    print("책 추천 생성 시작...")
-    recommendation = get_book_recommendation_huggingface()
-    print("결과 내용:\n", recommendation)
-    send_email(recommendation)
+    print("Gemini 1.5 Flash 호출 중...")
+    result = get_book_recommendation()
+    print(result)
+    send_email(result)
